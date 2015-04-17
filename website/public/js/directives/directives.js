@@ -45,7 +45,7 @@ habitrpg
           task._editing = !task._editing;
           task._tags = User.user.preferences.tagsCollapsed;
           task._advanced = User.user.preferences.advancedCollapsed;
-          if($rootScope.charts[task.id]) $rootScope.charts[task.id] = false;
+          if($rootScope.charts[task._id]) $rootScope.charts[task._id] = false;
         };
       }],
       link: function(scope, element, attrs) {
@@ -115,7 +115,7 @@ habitrpg.directive('hrpgSortTasks', ['User', function(User) {
       stop: function (event, ui) {
         var task = angular.element(ui.item[0]).scope().task,
           startIndex = ui.item.data('startIndex');
-        User.user.ops.sortTask({ params: {id: task.id}, query: {from: startIndex, to: ui.item.index()} });
+        User.user.ops.sortTask({ params: {_id: task._id}, query: {from: startIndex, to: ui.item.index()} });
       }
     });
   }

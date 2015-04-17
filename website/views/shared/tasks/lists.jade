@@ -167,6 +167,13 @@ script(id='templates/habitrpg-tasks.html', type="text/ng-template")
             +specialSpell('opaquePotion','spookDust')
             +specialSpell('petalFreePotion','shinySeed')
 
+          // Actual List
+          ul(class='{{list.type}}s main-list', ng-show='(obj[list.type + "s"] | size)>0', hrpg-sort-tasks, ng-if='!$state.includes("options.social.challenges")')
+            include ./task
+          //Loads the non-sortable lists for challenges
+          ul(class='{{list.type}}s main-list', ng-show='(obj[list.type + "s"] | size)>0', ng-if='$state.includes("options.social.challenges")')
+            include ./task
+
           // Spells
           ul.items(ng-if='main && list.type=="reward" && user.stats.class && !user.preferences.disableClasses')
             li.task.reward-item(ng-repeat='(k,skill) in Content.spells[user.stats.class]', ng-if='user.stats.lvl >= skill.lvl',popover-trigger='mouseenter', popover-placement='top', popover='{{skill.notes()}}')
