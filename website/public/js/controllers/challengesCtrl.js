@@ -190,11 +190,11 @@ habitrpg.controller("ChallengesCtrl", ['$rootScope','$scope', 'Shared', 'User', 
       delete listDef.newTask;
     };
 
-    $scope.removeTask = function(list, $index) {
+    $scope.removeTask = function(task, list) {
       if (!confirm(window.env.t('sureDelete'))) return;
       //TODO persist
       // User.log({op: "delTask", data: task});
-      list.splice($index, 1);
+      _.remove(list, task);
     };
 
     $scope.saveTask = function(task){
