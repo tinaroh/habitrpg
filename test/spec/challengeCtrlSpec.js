@@ -1,14 +1,14 @@
 'use strict';
 
 describe('Challenges Controller', function() {
-  var scope, ctrl, user, Challenges, Notification, User, $rootScope;
+  var scope, ctrl, user, Challenges, $rootScope;
 
   beforeEach(function() {
     module(function($provide) {
       $provide.value('User', {});
     });
 
-    inject(function($rootScope, $controller, _Challenges_, _Notification_, _User_){
+    inject(function($rootScope, $controller, _Challenges_){
       user = specHelper.newUser();
       user._id = "unique-user-id";
 
@@ -20,8 +20,6 @@ describe('Challenges Controller', function() {
       ctrl = $controller('ChallengesCtrl', {$scope: scope, User: {user: user}});
 
       Challenges = _Challenges_;
-      Notification = _Notification_;
-      User = _User_;
     });
   });
 
