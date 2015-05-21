@@ -13,6 +13,7 @@ var Challenge = require('./challenge').model;
 var moment = require('moment');
 var async = require('async');
 
+
 // User Schema
 // -----------
 
@@ -445,10 +446,12 @@ UserSchema.pre('save', function(next) {
   _.each(self.tasks, function(v,k){
     if (v.isModified) {
       if (v.isModified()) v.save();
-    } else { // TODO isNew here, not optimal handling
+    } else if (v.isNew) {
       var task = new Task(v);
       task._owner=self._id;
-      self[v.type+'s'][k] = task;
+      //self[v.type+'s'][k] = task;
+      task.emit('new', task);
+      task.overrides.$add(self._id, v.overrides || {});
       task.save();
     }
   })
