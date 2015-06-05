@@ -61,7 +61,7 @@ var TaskSchema = new Schema({
 
 TaskSchema.plugin(dictionaryPlugin, {
   fields: {
-    overrides: {
+    members: {
       text: String,
       notes: String,
       tags: {type: Schema.Types.Mixed, 'default': {}}, //{ "4ddf03d9-54bd-41a3-b011-ca1f1d2e9371" : true },
@@ -73,7 +73,9 @@ TaskSchema.plugin(dictionaryPlugin, {
       streak: {type: Number, 'default': 0},
       dateCompleted: Date,
       archived: {type:Boolean, 'default':false},
-      approval: Number
+      approval: Number,
+
+      checklist: {type: Schema.Types.Mixed }
     }
   }
 });

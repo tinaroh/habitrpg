@@ -94,7 +94,7 @@ api.score = function(req, res, next) {
     // If it doesn't exist, this is likely a 3rd party up/down - create a new one, then score it
     // Defaults. Other defaults are handled in user.ops.addTask()
     task = {
-      id: id,
+      _id: id,
       type: req.body && req.body.type,
       text: req.body && req.body.text,
       notes: (req.body && req.body.notes) || "This task was created by a third-party service. Feel free to edit, it won't harm the connection to that service. Additionally, multiple services may piggy-back off this task."
@@ -103,7 +103,7 @@ api.score = function(req, res, next) {
     if (task.type === 'daily' || task.type === 'todo')
       task.completed = direction === 'up';
   }
-  var delta = user.ops.score({params:{id:task.id, direction:direction}, language: req.language});
+  var delta = user.ops.score({params:{_id:task._id, direction:direction}, language: req.language});
 
   user.save(function(err,saved){
     if (err) return next(err);

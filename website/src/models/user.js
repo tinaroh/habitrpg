@@ -438,28 +438,34 @@ UserSchema.methods.toJSON = function() {
 
 UserSchema.post('init', function(doc){
   shared.wrap(doc); //fixme remove
-})
+});
+
+UserSchema.methods.validateTasks = function(){
+  var self = this;
+  _.each( _.defaults({},self.habits,self.todos,self.dailys,self.rewards), function(v,k){
+    if (v.isModified && v.isModified()) {
+      v.save();
+    } else if (!v.isModified || v.isNew) { // is POJO or new model
+      var task = new Task(v);
+      task._owner=self._id;
+      task.emit('new', task);
+      task.members.$add(self._id, v.members || {});
+      console.log(task.members);
+      task.save();
+      self[v.type+'s'][k] = task;
+    }
+  })
+}
 
 UserSchema.pre('save', function(next) {
 
   var self = this;
-  _.each(self.tasks, function(v,k){
-    if (v.isModified) {
-      if (v.isModified()) v.save();
-    } else if (v.isNew) {
-      var task = new Task(v);
-      task._owner=self._id;
-      //self[v.type+'s'][k] = task;
-      task.emit('new', task);
-      task.overrides.$add(self._id, v.overrides || {});
-      task.save();
-    }
-  })
 
   // Populate new users with default content
   if (this.isNew){
     var self = this;
     _.each(['habits', 'dailys', 'todos', 'rewards'], function(type){
+      self[type] = {};
       _.each(shared.content.userDefaults[type], _.flow(_.cloneDeep, function(task){
         // Render task's text and notes in user's language
         task.text = task.text(self.preferences.language);
@@ -467,9 +473,8 @@ UserSchema.pre('save', function(next) {
         _.each(task.checklist, function(checklistItem){
           checklistItem.text = checklistItem.text(self.preferences.language);
         })
-        task._owner = self._id;
-        task = new Task(task);
-        task.save();
+        task._id = shared.uuid();
+        self[type][task._id] = task;
       }));
     });
     self.tags = _.map(shared.content.userDefaults.tags, _.flow(_.cloneDeep, function(tag){
@@ -479,6 +484,8 @@ UserSchema.pre('save', function(next) {
       return tag;
     }));
   }
+
+  self.validateTasks();
 
   //this.markModified('tasks');
   if (_.isNaN(this.preferences.dayStart) || this.preferences.dayStart < 0 || this.preferences.dayStart > 23) {
@@ -563,14 +570,6 @@ UserSchema.methods.unlink = function(options, cb) {
   self.save(cb);
 }
 
-//_.each(['habit', 'daily', 'todo', 'reward'], function(type){
-//  UserSchema.virtual(type+'s').get(function(){
-//    return _.reduce(this.tasks, function(m,v){
-//      if (v.type==type) m[v._id]=v;return m;
-//    }, {})
-//  })
-//})
-
 UserSchema.statics.withTasks = function (q, cb) {
   q = _.isString(q) ? {_id:q} : q;
   async.auto({
@@ -591,9 +590,6 @@ UserSchema.statics.withTasks = function (q, cb) {
     });
     cb(null, obj.user);
   })
-  //this.findOne(q)
-  //.populate('tasks') //match: {archived:false}
-  //.exec(cb);
 };
 
 

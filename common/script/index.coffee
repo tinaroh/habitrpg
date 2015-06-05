@@ -9,15 +9,8 @@ api.i18n = i18n
 # little helper for large arrays of strings. %w"this that another" equivalent from Ruby, I really miss that function
 $w = api.$w = (s)->s.split(' ')
 
-api.dotSet = (obj,path,val)->
-  arr = path.split('.')
-  _.reduce arr, (curr, next, index) =>
-    if (arr.length - 1) == index
-      curr[next] = val
-    (curr[next] ?= {})
-  , obj
-api.dotGet = (obj,path)->
-  _.reduce path.split('.'), ((curr, next) => curr?[next]), obj
+api.dotSet = _.set
+api.dotGet = _.get
 
 ###
   Reflists are arrays, but stored as objects. Mongoose has a helluvatime working with arrays (the main problem for our
@@ -105,7 +98,7 @@ api.tnl = (lvl) ->
 ###
   A hyperbola function that creates diminishing returns, so you can't go to infinite (eg, with Exp gain).
   {max} The asymptote
-  {bonus} All the numbers combined for your point bonus (eg, task.value * user.stats.int * critChance, etc)
+  {bonus} All the numbers combined for your point bonus (eg, member.value * user.stats.int * critChance, etc)
   {halfway} (optional) the point at which the graph starts bending
 ###
 api.diminishingReturns = (bonus, max, halfway=max/2) ->
@@ -214,7 +207,7 @@ api.taskDefaults = (task={}) ->
   _.defaults(task, {completed:false}) if task.type in ['daily', 'todo']
   _.defaults(task, {streak:0, repeat: {su:1,m:1,t:1,w:1,th:1,f:1,s:1}}) if task.type is 'daily'
   task._id = task.id # may need this for TaskSchema if we go back to using it, see http://goo.gl/a5irq4
-  task.value ?= if task.type is 'reward' then 10 else 0
+  member.value ?= if task.type is 'reward' then 10 else 0
   task.priority = 1 unless _.isNumber(task.priority) # hotfix for apiv1. once we're off apiv1, we can remove this
   task
 
@@ -263,7 +256,8 @@ Task classes given everything about the class
 ###
 api.taskClasses = (task, filters=[], dayStart=0, lastCron=+new Date, showCompleted=false, main=false) ->
   return unless task
-  {type, completed, value, repeat, priority} = task
+  {type, repeat, priority} = task
+  {completed, value} = _.first _.values(task.members) #fixme!!
 
   # Filters
   if main # only show when on your own list
@@ -487,11 +481,12 @@ api.wrap = (user, main=true) ->
         user.balance--
         _.each user.tasks, (task) ->
           unless task.type is 'reward'
-            task.value = 0
+            member.value = 0
         user.stats.hp = 50
         cb? null, user
         mixpanel?.track("Acquire Item",{'itemName':'Fortify','acquireMethod':'Gems','gemCost':4})
         ga?.event('behavior', 'gems', 'reroll').send()
+
 
       rebirth: (req, cb, ga) ->
         # Cost is 8 Gems ($2)
@@ -507,9 +502,9 @@ api.wrap = (user, main=true) ->
         # Turn tasks yellow, zero out streaks
         _.each user.tasks, (task) ->
           unless task.type is 'reward'
-            task.value = 0
+            member.value = 0
           if task.type is 'daily'
-            task.streak = 0
+            member.streak = 0
         # Reset all dynamic stats
         stats = user.stats
         stats.buffs = {}
@@ -585,7 +580,7 @@ api.wrap = (user, main=true) ->
       updateTask: (req, cb) ->
         return cb?({code:404,message:i18n.t('messageTaskNotFound', req.language)}) unless task = user.tasks[req.params?._id]
         _.merge task, _.omit(req.body,['checklist','_id', 'type'])
-        task.checklist = req.body.checklist if req.body.checklist
+        member.checklist = req.body.checklist if req.body.checklist
         task.markModified? 'tags'
         cb? null, task
 
@@ -1054,40 +1049,38 @@ api.wrap = (user, main=true) ->
         id = req.params._id or req.params.id
         task = user.tasks[id]
         options = req.query or {}; _.defaults(options, {times:1, cron:false})
+        {stats} = user
+        member = task.members[user._id]
 
         # This is for setting one-time temporary flags, such as streakBonus or itemDropped. Useful for notifying
         # the API consumer, then cleared afterwards
         user._tmp = {}
 
-        # TODO do we need this fail-safe casting anymore? Are we safe now we're off Derby?
-        stats = {gp: +user.stats.gp, hp: +user.stats.hp, exp: +user.stats.exp}
-        task.value = +task.value; task.streak = ~~task.streak; task.priority ?= 1
-
         # If they're trying to purhcase a too-expensive reward, don't allow them to do that.
-        if task.value > stats.gp and task.type is 'reward'
+        if member.value > stats.gp and task.type is 'reward'
           return cb? {code:401,message:i18n.t('messageNotEnoughGold', req.language)}
 
         delta = 0
 
         calculateDelta = ->
-          # Calculates the next task.value based on direction
+          # Calculates the next member.value based on direction
           # Uses a capped inverse log y=.95^x, y>= -5
 
           # Min/max on task redness
           currVal =
-            if task.value < -47.27 then -47.27
-            else if task.value > 21.27 then 21.27
-            else task.value
+            if member.value < -47.27 then -47.27
+            else if member.value > 21.27 then 21.27
+            else member.value
           nextDelta = Math.pow(0.9747, currVal) * (if direction is 'down' then -1 else 1)
 
           # Checklists
-          if task.checklist?.length > 0
+          if member.checklist?.length > 0
             # If the Daily, only dock them them a portion based on their checklist completion
             if direction is 'down' and task.type is 'daily' and options.cron
-              nextDelta *= (1 - _.reduce(task.checklist,((m,i)->m+(if i.completed then 1 else 0)),0) / task.checklist.length)
+              nextDelta *= (1 - _.reduce(member.checklist,((m,i)->m+(if i.completed then 1 else 0)),0) / member.checklist.length)
             # If To-Do, point-match the TD per checklist item completed
             if task.type is 'todo'
-              nextDelta *= (1 + _.reduce(task.checklist,((m,i)->m+(if i.completed then 1 else 0)),0))
+              nextDelta *= (1 + _.reduce(member.checklist,((m,i)->m+(if i.completed then 1 else 0)),0))
           nextDelta
 
         calculateReverseDelta = ->
@@ -1096,9 +1089,9 @@ api.wrap = (user, main=true) ->
           # First, calculate the the value using the normal way for our first guess although
           # it will be a bit off
           currVal =
-            if task.value < -47.27 then -47.27
-            else if task.value > 21.27 then 21.27
-            else task.value
+            if member.value < -47.27 then -47.27
+            else if member.value > 21.27 then 21.27
+            else member.value
           testVal = currVal + Math.pow(0.9747, currVal) * (if direction is 'down' then -1 else 1)
 
           # Now keep moving closer to the original value until we get "close enough"
@@ -1121,10 +1114,10 @@ api.wrap = (user, main=true) ->
           nextDelta = testVal - currVal
 
           # Checklists
-          if task.checklist?.length > 0
+          if member.checklist?.length > 0
             # If To-Do, point-match the TD per checklist item completed
             if task.type is 'todo'
-              nextDelta *= (1 + _.reduce(task.checklist,((m,i)->m+(if i.completed then 1 else 0)),0))
+              nextDelta *= (1 + _.reduce(member.checklist,((m,i)->m+(if i.completed then 1 else 0)),0))
           nextDelta
 
 
@@ -1139,7 +1132,7 @@ api.wrap = (user, main=true) ->
                 user.party.quest.progress.up = user.party.quest.progress.up || 0;
                 user.party.quest.progress.up += (nextDelta * (1 + (user._statsComputed.str / 200))) if task.type in ['daily','todo']
                 user.party.quest.progress.up += (nextDelta * (0.5 + (user._statsComputed.str / 400))) if task.type is 'habit'
-              task.value += nextDelta
+              member.value += nextDelta
             delta += nextDelta
 
         addPoints = ->
@@ -1161,8 +1154,8 @@ api.wrap = (user, main=true) ->
           perBonus = (1 + user._statsComputed.per *.02)
           gpMod = (delta * task.priority * _crit * perBonus)
           stats.gp +=
-            if task.streak
-              currStreak = if direction is 'down' then task.streak-1 else task.streak
+            if member.streak
+              currStreak = if direction is 'down' then member.streak-1 else member.streak
               streakBonus = currStreak / 100 + 1 # eg, 1-day streak is 1.01, 2-day is 1.02, etc
               afterStreak = gpMod * streakBonus
               if currStreak > 0
@@ -1196,16 +1189,16 @@ api.wrap = (user, main=true) ->
             # History
             th = (task.history ?= [])
             if th[th.length-1] and moment(th[th.length-1].date).isSame(new Date, 'day')
-              th[th.length-1].value = task.value
+              th[th.length-1].value = member.value
             else
-              th.push {date: +new Date, value: task.value}
+              th.push {date: +new Date, value: member.value}
             user.markModified? "habits.#{_.findIndex(user.habits, {id:task.id})}.history"
 
           when 'daily'
             if options.cron
               changeTaskValue()
               subtractPoints()
-              task.streak = 0 unless user.stats.buffs.streaks
+              member.streak = 0 unless user.stats.buffs.streaks
             else
               changeTaskValue()
               if direction is 'down'
@@ -1213,41 +1206,43 @@ api.wrap = (user, main=true) ->
               addPoints() # obviously for delta>0, but also a trick to undo accidental checkboxes
               gainMP(_.max([1, (.01 * user._statsComputed.maxMP)]) * if direction is 'down' then -1 else 1)
               if direction is 'up'
-                task.streak = if task.streak then task.streak + 1 else 1
+                member.streak = if member.streak then member.streak + 1 else 1
                 # Give a streak achievement when the streak is a multiple of 21
-                if (task.streak % 21) is 0
+                if (member.streak % 21) is 0
                   user.achievements.streak = if user.achievements.streak then user.achievements.streak + 1 else 1
               else
                 # Remove a streak achievement if streak was a multiple of 21 and the daily was undone
-                if (task.streak % 21) is 0
+                if (member.streak % 21) is 0
                   user.achievements.streak = if user.achievements.streak then user.achievements.streak - 1 else 0
-                task.streak = if task.streak then task.streak - 1 else 0
+                member.streak = if member.streak then member.streak - 1 else 0
 
           when 'todo'
             if options.cron
               changeTaskValue()
               #don't touch stats on cron
             else
-              task.dateCompleted = if direction is 'up' then new Date else undefined
+              member.dateCompleted = if direction is 'up' then new Date else undefined
               changeTaskValue()
               if direction is 'down'
                 delta = calculateDelta() # recalculate delta for unchecking so the gp and exp come out correctly
               addPoints() # obviously for delta>0, but also a trick to undo accidental checkboxes
               # MP++ per checklist item in ToDo, bonus per CLI
-              multiplier = _.max([(_.reduce(task.checklist,((m,i)->m+(if i.completed then 1 else 0)),1)),1])
+              multiplier = _.max([(_.reduce(member.checklist,((m,i)->m+(if i.completed then 1 else 0)),1)),1])
               gainMP(_.max([(multiplier), (.01 * user._statsComputed.maxMP * multiplier)]) * if direction is 'down' then -1 else 1)
 
           when 'reward'
           # Don't adjust values for rewards
             changeTaskValue()
             # purchase item
-            stats.gp -= Math.abs(task.value)
-            num = parseFloat(task.value).toFixed(2)
+            stats.gp -= Math.abs(member.value)
+            num = parseFloat(member.value).toFixed(2)
             # if too expensive, reduce health & zero gp
             if stats.gp < 0
               # hp - gp difference
               stats.hp += stats.gp
               stats.gp = 0
+
+        console.log stats: if stats.toObject? then stats.toObject() else stats
 
         user.fns.updateStats stats, req
 
@@ -1322,20 +1317,21 @@ api.wrap = (user, main=true) ->
 
     randomDrop: (modifiers, req) ->
       {task} = modifiers
+      member = task.members[user._id]
 
       # % chance of getting a drop
 
-      chance = _.min([Math.abs(task.value - 21.27),37.5])/150+.02   # Base drop chance is a percentage based on task value. Typical fresh task: 15%. Very ripe task: 25%. Very blue task: 2%.
+      chance = _.min([Math.abs(member.value - 21.27),37.5])/150+.02   # Base drop chance is a percentage based on task value. Typical fresh task: 15%. Very ripe task: 25%. Very blue task: 2%.
 
       chance *=
         task.priority *                                 # Task priority: +50% for Medium, +100% for Hard
-        (1 + (task.streak / 100 or 0)) *                # Streak bonus: +1% per streak
+        (1 + (member.streak / 100 or 0)) *                # Streak bonus: +1% per streak
         (1 + (user._statsComputed.per / 100)) *         # PERception: +1% per point
         (1 + (user.contributor.level / 40 or 0)) *      # Contrib levels: +2.5% per level
         (1 + (user.achievements.rebirths / 20 or 0)) *  # Rebirths: +5% per achievement
         (1 + (user.achievements.streak / 200 or 0)) *   # Streak achievements: +0.5% per achievement
         (user._tmp.crit or 1) *                         # Use the crit multiplier if we got one
-        (1 + .5*(_.reduce(task.checklist,((m,i)->m+(if i.completed then 1 else 0)),0) or 0)) # +50% per checklist item complete. TODO: make this into X individual drop chances instead
+        (1 + .5*(_.reduce(member.checklist,((m,i)->m+(if i.completed then 1 else 0)),0) or 0)) # +50% per checklist item complete. TODO: make this into X individual drop chances instead
 
       chance = api.diminishingReturns(chance, 0.75)
 
@@ -1602,8 +1598,8 @@ api.wrap = (user, main=true) ->
           if scheduleMisses > EvadeTask
             if type is 'daily'
               perfect = false
-              if task.checklist?.length > 0  # Partially completed checklists dock fewer mana points
-                fractionChecked = _.reduce(task.checklist,((m,i)->m+(if i.completed then 1 else 0)),0) / task.checklist.length
+              if member.checklist?.length > 0  # Partially completed checklists dock fewer mana points
+                fractionChecked = _.reduce(member.checklist,((m,i)->m+(if i.completed then 1 else 0)),0) / member.checklist.length
                 dailyDueUnchecked += (1 - fractionChecked)
                 dailyChecked += fractionChecked
               else
@@ -1614,25 +1610,25 @@ api.wrap = (user, main=true) ->
         switch type
           when 'daily'
             # This occurs whether or not the task is completed
-            (task.history ?= []).push({ date: +new Date, value: task.value })
-            task.completed = false
+            (task.history ?= []).push({ date: +new Date, value: member.value })
+            member.completed = false
             if completed || (scheduleMisses > 0)
-              _.each task.checklist, ((i)->i.completed=false;true) # this should not happen for grey tasks unless they are completed
+              _.each member.checklist, ((i)->i.completed=false;true) # this should not happen for grey tasks unless they are completed
           when 'todo'
             # get updated value
-            absVal = if (completed) then Math.abs(task.value) else task.value
+            absVal = if (completed) then Math.abs(member.value) else member.value
             todoTally += absVal
             # archive old ones #FIXME untested code
-            if task.completed && !task.challenge?.id && moment(task.dateCompleted).isBefore(moment().subtract({days:3}))
-              task.archived = true
+            if member.completed && !task.challenge?.id && moment(member.dateCompleted).isBefore(moment().subtract({days:3}))
+              member.archived = true
         true
 
       _.each user.habits, (task) -> # slowly reset 'onlies' value to 0
         if task.up is false or task.down is false
-          if Math.abs(task.value) < 0.1
-            task.value = 0
+          if Math.abs(member.value) < 0.1
+            member.value = 0
           else
-            task.value = task.value / 2
+            member.value = member.value / 2
         true
 
 
